@@ -1,7 +1,7 @@
 (() => {
   const DEFAULT_SETTINGS = {
-    modelOverride: "gpt-5.3-instant",
-    planTier: "Plus",
+    modelOverride: "",
+    planTier: "",
     customContextSize: 8000,
     modelContextOverrides: {},
     perAttachmentTokens: 200,
@@ -112,21 +112,8 @@
   }
 
   function detectModelLabel() {
-    const candidates = [];
-    const buttons = Array.from(document.querySelectorAll("button, [data-testid], [aria-label]"));
-    for (const el of buttons) {
-      const text = (el.textContent || "").trim();
-      const aria = (el.getAttribute("aria-label") || "").trim();
-      const combined = `${text} ${aria}`.trim();
-      if (!combined) continue;
-      if (/gpt|o\d|model/i.test(combined)) {
-        candidates.push(combined);
-      }
-    }
-
-    const match = candidates.find((value) => /gpt|o\d/i.test(value));
-    if (!match) return "";
-    return match.split("\n")[0].trim();
+    // Placeholder for future model detection.
+    return "";
   }
 
   function normalizeModelId(label) {
@@ -264,16 +251,30 @@
     return false;
   }
 
+  function isReadyToEstimate() {
+    return Boolean(state.settings.planTier && state.settings.modelOverride);
+  }
+
   function calculateEstimate() {
+    if (!isReadyToEstimate()) {
+      state.modelLabel = "Not selected";
+      state.modelId = "";
+      state.contextSize = 0;
+      state.estimate = {
+        chatTokens: 0,
+        attachmentTokens: 0,
+        overheadTokens: 0,
+        totalTokens: 0
+      };
+      state.isIncomplete = false;
+      return;
+    }
     const { messages, attachmentCount } = parseConversation();
     const chatText = messages.map((m) => m.text).join("\n\n");
 
     const detectedLabel = detectModelLabel();
-    state.modelLabel = detectedLabel;
-
-    const detectedId = detectedLabel ? normalizeModelId(detectedLabel) : "unknown";
-    const override = state.settings.modelOverride;
-    state.modelId = override === "auto" ? detectedId : override;
+    state.modelLabel = detectedLabel || "Manual selection";
+    state.modelId = state.settings.modelOverride;
 
     state.contextSize = getContextSize(state.modelId);
 
@@ -311,12 +312,22 @@
     state.ui.percent.textContent = `${percent}% used`;
     state.ui.barFill.style.width = `${percent}%`;
 
-    state.ui.totalTokens.textContent = formatNumber(state.estimate.totalTokens);
-    state.ui.chatTokens.textContent = formatNumber(state.estimate.chatTokens);
-    state.ui.attachmentTokens.textContent = formatNumber(state.estimate.attachmentTokens);
-    state.ui.overheadTokens.textContent = formatNumber(state.estimate.overheadTokens);
-    state.ui.modelLabel.textContent = state.modelLabel || "Unknown";
-    state.ui.contextSize.textContent = formatNumber(state.contextSize);
+    const ready = isReadyToEstimate();
+    if (ready) {
+      state.ui.totalTokens.textContent = formatNumber(state.estimate.totalTokens);
+      state.ui.chatTokens.textContent = formatNumber(state.estimate.chatTokens);
+      state.ui.attachmentTokens.textContent = formatNumber(state.estimate.attachmentTokens);
+      state.ui.overheadTokens.textContent = formatNumber(state.estimate.overheadTokens);
+      state.ui.modelLabel.textContent = state.modelLabel || "Unknown";
+      state.ui.contextSize.textContent = formatNumber(state.contextSize);
+    } else {
+      state.ui.totalTokens.textContent = "—";
+      state.ui.chatTokens.textContent = "—";
+      state.ui.attachmentTokens.textContent = "—";
+      state.ui.overheadTokens.textContent = "—";
+      state.ui.modelLabel.textContent = "Not selected";
+      state.ui.contextSize.textContent = "—";
+    }
 
     state.ui.warning.style.display = state.isIncomplete ? "block" : "none";
 
@@ -326,42 +337,18 @@
   function updateModelSelect() {
     const select = state.ui.modelSelect;
     if (!select) return;
-    if (!PLAN_OPTIONS.some((opt) => opt.id === state.settings.planTier)) {
-      state.settings.planTier = DEFAULT_SETTINGS.planTier;
+    if (state.settings.planTier && !PLAN_OPTIONS.some((opt) => opt.id === state.settings.planTier)) {
+      state.settings.planTier = "";
       safeStorageSet(state.settings);
     }
     if (state.ui.planSelect) state.ui.planSelect.value = state.settings.planTier;
     const nextOptions = buildModelOptions(state.settings.planTier);
     select.innerHTML = nextOptions.map((opt) => `<option value="${opt.id}">${opt.label}</option>`).join("");
-    if (!nextOptions.some((opt) => opt.id === state.settings.modelOverride)) {
-      state.settings.modelOverride = DEFAULT_SETTINGS.modelOverride;
+    if (state.settings.modelOverride && !nextOptions.some((opt) => opt.id === state.settings.modelOverride)) {
+      state.settings.modelOverride = "";
       safeStorageSet(state.settings);
     }
     select.value = state.settings.modelOverride;
-
-    state.ui.customContextRow.style.display = "flex";
-    const targetId = getOverrideTargetId();
-    if (!targetId) {
-      state.ui.customContextInput.value = "";
-      state.ui.customContextInput.placeholder = "";
-      state.ui.customContextInput.disabled = true;
-      state.ui.customContextLabel.textContent = "Context cap (override)";
-    } else if (targetId === "custom") {
-      state.ui.customContextInput.disabled = false;
-      state.ui.customContextLabel.textContent = "Context size";
-      state.ui.customContextInput.value = state.settings.customContextSize;
-      state.ui.customContextInput.placeholder = "";
-    } else {
-      state.ui.customContextInput.disabled = false;
-      state.ui.customContextLabel.textContent = "Context cap (override)";
-      const overrides = state.settings.modelContextOverrides || {};
-      const override = overrides[targetId];
-      state.ui.customContextInput.value = Number.isFinite(override) ? override : "";
-      const planCap = getPlanCap(targetId, state.settings.planTier);
-      state.ui.customContextInput.placeholder = Number.isFinite(planCap) ? String(planCap) : "";
-    }
-
-    state.ui.attachmentInput.value = state.settings.perAttachmentTokens;
   }
 
   function scheduleRecalc() {
@@ -405,14 +392,6 @@
             <label for="ccx-model-select">Model</label>
             <select id="ccx-model-select"></select>
           </div>
-          <div class="ccx-control" id="ccx-custom-row">
-            <label for="ccx-custom-context" id="ccx-custom-label">Context cap (override)</label>
-            <input id="ccx-custom-context" type="number" min="1000" step="100" />
-          </div>
-          <div class="ccx-control">
-            <label for="ccx-attach-input">Tokens / attachment</label>
-            <input id="ccx-attach-input" type="number" min="0" step="10" />
-          </div>
         </div>
 
         <div id="ccx-actions">
@@ -437,7 +416,10 @@
     });
 
     const planSelect = root.querySelector("#ccx-plan-select");
-    planSelect.innerHTML = PLAN_OPTIONS.map((opt) => `<option value="${opt.id}">${opt.label}</option>`).join("");
+    planSelect.innerHTML = [
+      `<option value="" disabled>Select plan</option>`,
+      ...PLAN_OPTIONS.map((opt) => `<option value="${opt.id}">${opt.label}</option>`)
+    ].join("");
     planSelect.addEventListener("change", (event) => {
       state.settings.planTier = event.target.value;
       safeStorageSet(state.settings);
@@ -457,48 +439,6 @@
       updateUI();
     });
 
-    const customInput = root.querySelector("#ccx-custom-context");
-    customInput.addEventListener("change", (event) => {
-      const raw = event.target.value.trim();
-      const targetId = getOverrideTargetId();
-      if (!targetId) return;
-      if (!raw) {
-        if (targetId === "custom") return;
-        if (state.settings.modelContextOverrides && state.settings.modelContextOverrides[targetId]) {
-          delete state.settings.modelContextOverrides[targetId];
-          safeStorageSet(state.settings);
-          calculateEstimate();
-          updateUI();
-        }
-        return;
-      }
-      const value = Number(raw);
-      if (Number.isFinite(value) && value > 0) {
-        if (targetId === "custom") {
-          state.settings.customContextSize = value;
-        } else {
-          state.settings.modelContextOverrides = {
-            ...(state.settings.modelContextOverrides || {}),
-            [targetId]: value
-          };
-        }
-        safeStorageSet(state.settings);
-        calculateEstimate();
-        updateUI();
-      }
-    });
-
-    const attachmentInput = root.querySelector("#ccx-attach-input");
-    attachmentInput.addEventListener("change", (event) => {
-      const value = Number(event.target.value);
-      if (Number.isFinite(value) && value >= 0) {
-        state.settings.perAttachmentTokens = value;
-        safeStorageSet(state.settings);
-        calculateEstimate();
-        updateUI();
-      }
-    });
-
     state.ui = {
       root,
       percent: root.querySelector("#ccx-percent"),
@@ -511,15 +451,14 @@
       contextSize: root.querySelector("#ccx-context"),
       warning: root.querySelector("#ccx-warning"),
       planSelect,
-      modelSelect,
-      customContextRow: root.querySelector("#ccx-custom-row"),
-      customContextLabel: root.querySelector("#ccx-custom-label"),
-      customContextInput: customInput,
-      attachmentInput
+      modelSelect
     };
   }
 
   function buildModelOptions(planTier) {
+    if (!planTier) {
+      return [{ id: "", label: "Select model" }];
+    }
     const allowedIds = new Set();
     if (planTier === "Free" || planTier === "Go") {
       allowedIds.add("gpt-5.3-instant");
@@ -537,11 +476,7 @@
       label: model.label
     }));
 
-    return [
-      { id: "auto", label: "Auto-detect" },
-      ...allowedModels,
-      { id: "custom", label: "Custom" }
-    ];
+    return [{ id: "", label: "Select model" }, ...allowedModels];
   }
 
   function observeDom() {
