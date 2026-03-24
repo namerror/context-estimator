@@ -1,79 +1,18 @@
 (() => {
-  const DEFAULT_SETTINGS = {
+  const config = window.__ccxConfig || {};
+  const DEFAULT_SETTINGS = config.DEFAULT_SETTINGS || {
     modelOverride: "",
     planTier: "",
     customContextSize: 8000,
     modelContextOverrides: {},
     perAttachmentTokens: 200,
     overheadTokens: 500,
-    virtualizationStrategy: "USER_GUIDED"
+    virtualizationStrategy: "USER_GUIDED",
+    estimationMethod: "fast"
   };
-
-  const PLAN_OPTIONS = [
-    { id: "Free", label: "Free" },
-    { id: "Go", label: "Go" },
-    { id: "Plus", label: "Plus" },
-    { id: "Pro", label: "Pro" },
-    { id: "Business", label: "Business" },
-    { id: "Enterprise", label: "Enterprise" }
-  ];
-
-  const MODEL_DEFS = [
-    {
-      id: "gpt-5.3-instant",
-      label: "GPT-5.3 Instant",
-      caps: {
-        Free: 16000,
-        Go: 32000,
-        Plus: 32000,
-        Pro: 128000,
-        Business: 32000,
-        Enterprise: 128000
-      }
-    },
-    {
-      id: "gpt-5.4-thinking",
-      label: "GPT-5.4 Thinking",
-      caps: {
-        Plus: 196000,
-        Pro: 196000,
-        Business: 196000,
-        Enterprise: 196000
-      }
-    },
-    {
-      id: "gpt-5.4-pro",
-      label: "GPT-5.4 Pro",
-      caps: {
-        Plus: 196000,
-        Pro: 196000,
-        Business: 196000,
-        Enterprise: 196000
-      }
-    },
-    {
-      id: "gpt-5.2-instant",
-      label: "GPT-5.2 Instant (Legacy)",
-      contextWindow: 400000
-    },
-    {
-      id: "gpt-5.2-thinking",
-      label: "GPT-5.2 Thinking (Legacy)",
-      contextWindow: 400000
-    },
-    {
-      id: "gpt-5-mini",
-      label: "GPT-5 mini",
-      contextWindow: 400000
-    },
-    {
-      id: "o3",
-      label: "o3",
-      contextWindow: 200000
-    }
-  ];
-
-  const LEGACY_MODEL_IDS = new Set(["gpt-5.2-instant", "gpt-5.2-thinking"]);
+  const PLAN_OPTIONS = config.PLAN_OPTIONS || [];
+  const MODEL_DEFS = config.MODEL_DEFS || [];
+  const LEGACY_MODEL_IDS = config.LEGACY_MODEL_IDS || new Set();
 
   const state = {
     settings: { ...DEFAULT_SETTINGS },
@@ -163,25 +102,6 @@
     const planCap = getPlanCap(modelId, state.settings.planTier);
     if (Number.isFinite(planCap) && planCap > 0) return planCap;
     return state.settings.customContextSize || DEFAULT_SETTINGS.customContextSize;
-  }
-
-  function estimateTokensHeuristic(text, modelId) {
-    const chars = text.length;
-    let charsPerToken = 4;
-    if (modelId.startsWith("gpt-4")) charsPerToken = 3.8;
-    if (modelId.startsWith("gpt-3")) charsPerToken = 4;
-    const tokens = Math.ceil(chars / charsPerToken);
-    return Math.max(tokens, 0);
-  }
-
-  function estimateTokensPrecise(text) {
-    const tokenizer = window.__ccxTokenizer;
-    if (!tokenizer || typeof tokenizer.encode !== "function") return null;
-    try {
-      return tokenizer.encode(text).length;
-    } catch {
-      return null;
-    }
   }
 
   function normalizeText(text) {
@@ -278,9 +198,15 @@
 
     state.contextSize = getContextSize(state.modelId);
 
-    let chatTokens = estimateTokensHeuristic(chatText, state.modelId);
-    const precise = estimateTokensPrecise(chatText);
-    if (typeof precise === "number") chatTokens = precise;
+    const estimator = getEstimator(state.settings.estimationMethod) || getEstimator("fast");
+    const estimatorInput = {
+      text: chatText,
+      modelId: state.modelId,
+      tokenizer: window.__ccxTokenizer,
+      settings: state.settings
+    };
+    const result = estimator ? estimator.estimate(estimatorInput) : { chatTokens: 0 };
+    const chatTokens = Number.isFinite(result?.chatTokens) ? result.chatTokens : 0;
 
     const attachmentTokens = attachmentCount * state.settings.perAttachmentTokens;
     const overheadTokens = state.settings.overheadTokens;
@@ -332,6 +258,7 @@
     state.ui.warning.style.display = state.isIncomplete ? "block" : "none";
 
     updateModelSelect();
+    updateMethodSelect();
   }
 
   function updateModelSelect() {
@@ -349,6 +276,40 @@
       safeStorageSet(state.settings);
     }
     select.value = state.settings.modelOverride;
+  }
+
+  function getEstimatorRegistry() {
+    return window.__ccxEstimatorRegistry || null;
+  }
+
+  function getEstimator(id) {
+    return getEstimatorRegistry()?.getEstimator?.(id) || null;
+  }
+
+  function buildMethodOptions() {
+    const registry = getEstimatorRegistry();
+    const estimators = registry?.listEstimators?.() || [];
+    const options = estimators.map((est) => ({
+      id: est.id,
+      label: est.label || est.id
+    }));
+    if (!options.length) {
+      options.push({ id: "fast", label: "Fast estimation" });
+      options.push({ id: "methodB", label: "Method B (placeholder)" });
+    }
+    return options;
+  }
+
+  function updateMethodSelect() {
+    const select = state.ui.methodSelect;
+    if (!select) return;
+    const options = buildMethodOptions();
+    select.innerHTML = options.map((opt) => `<option value="${opt.id}">${opt.label}</option>`).join("");
+    if (!options.some((opt) => opt.id === state.settings.estimationMethod)) {
+      state.settings.estimationMethod = "fast";
+      safeStorageSet(state.settings);
+    }
+    select.value = state.settings.estimationMethod;
   }
 
   function scheduleRecalc() {
@@ -390,6 +351,10 @@
           <div class="ccx-control">
             <label for="ccx-model-select">Model</label>
             <select id="ccx-model-select"></select>
+          </div>
+          <div class="ccx-control">
+            <label for="ccx-method-select">Estimation</label>
+            <select id="ccx-method-select"></select>
           </div>
         </div>
 
@@ -449,6 +414,17 @@
       updateUI();
     });
 
+    const methodSelect = root.querySelector("#ccx-method-select");
+    methodSelect.innerHTML = buildMethodOptions()
+      .map((opt) => `<option value="${opt.id}">${opt.label}</option>`)
+      .join("");
+    methodSelect.addEventListener("change", (event) => {
+      state.settings.estimationMethod = event.target.value;
+      safeStorageSet(state.settings);
+      calculateEstimate();
+      updateUI();
+    });
+
     state.ui = {
       root,
       percent: root.querySelector("#ccx-percent"),
@@ -461,7 +437,8 @@
       contextSize: root.querySelector("#ccx-context"),
       warning: root.querySelector("#ccx-warning"),
       planSelect,
-      modelSelect
+      modelSelect,
+      methodSelect
     };
   }
 

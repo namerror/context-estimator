@@ -10,7 +10,13 @@
   "content_scripts": [
     {
       "matches": ["https://chatgpt.com/*", "https://*.chatgpt.com/*"],
-      "js": ["content.js"],
+      "js": [
+        "config.js",
+        "estimators/registry.js",
+        "estimators/fast.js",
+        "estimators/method-b.js",
+        "content.js"
+      ],
       "css": ["styles.css"],
       "run_at": "document_idle"
     }
