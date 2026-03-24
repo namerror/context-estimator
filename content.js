@@ -372,7 +372,6 @@
       <div id="ccx-panel">
         <div class="ccx-title">
           <span>Context Estimate</span>
-          <span id="ccx-close">Close</span>
         </div>
         <div class="ccx-row"><span class="ccx-muted">Total tokens</span><strong id="ccx-total">0</strong></div>
         <div class="ccx-row"><span class="ccx-muted">Chat text</span><span id="ccx-chat">0</span></div>
@@ -407,7 +406,6 @@
     const collapsed = root.querySelector("#ccx-collapsed");
 
     collapsed.addEventListener("click", () => panel.classList.toggle("ccx-open"));
-    root.querySelector("#ccx-close").addEventListener("click", () => panel.classList.remove("ccx-open"));
     root.querySelector("#ccx-minimize").addEventListener("click", () => panel.classList.remove("ccx-open"));
 
     root.querySelector("#ccx-refresh").addEventListener("click", () => {
