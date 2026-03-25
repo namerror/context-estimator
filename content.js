@@ -22,7 +22,6 @@
     contextSize: DEFAULT_SETTINGS.customContextSize,
     estimate: {
       chatTokens: 0,
-      attachmentTokens: 0,
       overheadTokens: DEFAULT_SETTINGS.overheadTokens,
       totalTokens: 0
     },
@@ -114,36 +113,18 @@
     return Array.from(document.querySelectorAll("[data-testid='conversation-turn']"));
   }
 
-  function countAttachmentsInNode(node) {
-    const attachmentSelectors = [
-      "[data-testid*='attachment']",
-      "[data-testid*='file']",
-      "[aria-label*='attachment']",
-      "[aria-label*='file']",
-      "a[href*='file']",
-      "img[alt*='attachment']"
-    ];
-    let count = 0;
-    for (const selector of attachmentSelectors) {
-      count += node.querySelectorAll(selector).length;
-    }
-    return count;
-  }
-
   function parseConversation() {
     const messageNodes = findMessageNodes();
     const messages = [];
-    let attachmentCount = 0;
 
     for (const node of messageNodes) {
       const role = node.getAttribute("data-message-author-role") || "unknown";
       const text = normalizeText(node.innerText || "");
       if (!text) continue;
       messages.push({ role, text });
-      attachmentCount += countAttachmentsInNode(node);
     }
 
-    return { messages, attachmentCount };
+    return { messages };
   }
 
   function findScrollContainer() {
@@ -182,14 +163,13 @@
       state.contextSize = 0;
       state.estimate = {
         chatTokens: 0,
-        attachmentTokens: 0,
         overheadTokens: 0,
         totalTokens: 0
       };
       state.isIncomplete = false;
       return;
     }
-    const { messages, attachmentCount } = parseConversation();
+    const { messages } = parseConversation();
     const chatText = messages.map((m) => m.text).join("\n\n");
 
     const detectedLabel = detectModelLabel();
@@ -208,13 +188,11 @@
     const result = estimator ? estimator.estimate(estimatorInput) : { chatTokens: 0 };
     const chatTokens = Number.isFinite(result?.chatTokens) ? result.chatTokens : 0;
 
-    const attachmentTokens = attachmentCount * state.settings.perAttachmentTokens;
     const overheadTokens = state.settings.overheadTokens;
-    const totalTokens = chatTokens + attachmentTokens + overheadTokens;
+    const totalTokens = chatTokens + overheadTokens;
 
     state.estimate = {
       chatTokens,
-      attachmentTokens,
       overheadTokens,
       totalTokens
     };
@@ -242,14 +220,12 @@
     if (ready) {
       state.ui.totalTokens.textContent = formatNumber(state.estimate.totalTokens);
       state.ui.chatTokens.textContent = formatNumber(state.estimate.chatTokens);
-      state.ui.attachmentTokens.textContent = "Not implemented";
       state.ui.overheadTokens.textContent = formatNumber(state.estimate.overheadTokens);
       state.ui.modelLabel.textContent = state.modelLabel || "Unknown";
       state.ui.contextSize.textContent = formatNumber(state.contextSize);
     } else {
       state.ui.totalTokens.textContent = "—";
       state.ui.chatTokens.textContent = "—";
-      state.ui.attachmentTokens.textContent = "Not implemented";
       state.ui.overheadTokens.textContent = "—";
       state.ui.modelLabel.textContent = "Not selected";
       state.ui.contextSize.textContent = "—";
@@ -431,7 +407,6 @@
       barFill: root.querySelector("#ccx-bar-fill"),
       totalTokens: root.querySelector("#ccx-total"),
       chatTokens: root.querySelector("#ccx-chat"),
-      attachmentTokens: root.querySelector("#ccx-attach"),
       overheadTokens: root.querySelector("#ccx-overhead"),
       modelLabel: root.querySelector("#ccx-model"),
       contextSize: root.querySelector("#ccx-context"),
