@@ -12,6 +12,9 @@
       "matches": ["https://chatgpt.com/*", "https://*.chatgpt.com/*"],
       "js": [
         "config.js",
+        "vendor/gpt-tokenizer/o200k_base.js",
+        "vendor/gpt-tokenizer/cl100k_base.js",
+        "tokenizers/ccx-tokenizer.js",
         "estimators/registry.js",
         "estimators/fast.js",
         "estimators/precise.js",

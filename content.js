@@ -25,11 +25,13 @@
       overheadTokens: DEFAULT_SETTINGS.overheadTokens,
       totalTokens: 0
     },
-    isIncomplete: false
+    isIncomplete: false,
+    preciseSkipped: false
   };
 
   const STORAGE_KEY = "ccx_settings";
   const DEBOUNCE_MS = 500;
+  const PRECISE_MAX_CHARS = 250000;
   let recalcTimer = null;
 
   function safeStorageGet() {
@@ -167,10 +169,14 @@
         totalTokens: 0
       };
       state.isIncomplete = false;
+      state.preciseSkipped = false;
       return;
     }
     const { messages } = parseConversation();
     const chatText = messages.map((m) => m.text).join("\n\n");
+    const selectedMethod = state.settings.estimationMethod;
+    const shouldSkipPrecise = selectedMethod === "precise" && chatText.length > PRECISE_MAX_CHARS;
+    state.preciseSkipped = shouldSkipPrecise;
 
     const detectedLabel = detectModelLabel();
     state.modelLabel = detectedLabel || "Manual selection";
@@ -178,7 +184,8 @@
 
     state.contextSize = getContextSize(state.modelId);
 
-    const estimator = getEstimator(state.settings.estimationMethod) || getEstimator("fast");
+    const estimatorId = shouldSkipPrecise ? "fast" : selectedMethod;
+    const estimator = getEstimator(estimatorId) || getEstimator("fast");
     const estimatorInput = {
       text: chatText,
       modelId: state.modelId,
@@ -237,7 +244,15 @@
       state.ui.contextSize.textContent = "—";
     }
 
-    state.ui.warning.style.display = state.isIncomplete ? "block" : "none";
+    const warnings = [];
+    if (state.isIncomplete) {
+      warnings.push("History may be incomplete. Scroll up to load more for a better estimate.");
+    }
+    if (state.preciseSkipped) {
+      warnings.push("Precise tokenization skipped (chat too large); using Fast estimation.");
+    }
+    state.ui.warning.style.display = warnings.length ? "block" : "none";
+    state.ui.warning.innerHTML = warnings.map((w) => `<div>${w}</div>`).join("");
 
     updateModelSelect();
     updateMethodSelect();
@@ -278,7 +293,7 @@
     if (!options.length) {
       options.push({ id: "fast", label: "Fast estimation" });
       options.push({ id: "precise", label: "Precise (tokenizer)" });
-      options.push({ id: "methodB", label: "Method B (placeholder)" });
+      // options.push({ id: "methodB", label: "Method B (placeholder)" });
     }
     return options;
   }
