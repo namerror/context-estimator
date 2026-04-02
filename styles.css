@@ -1,12 +1,17 @@
 :root {
-  --ccx-bg: #0f1a24;
-  --ccx-fg: #e6f0ff;
-  --ccx-muted: #9fb2c8;
-  --ccx-accent: #3fb37f;
-  --ccx-warn: #e0a800;
-  --ccx-border: rgba(255, 255, 255, 0.12);
-  --ccx-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-  --ccx-font: "Space Grotesk", "Segoe UI", sans-serif;
+  --ccx-bg: #f7f9f7;
+  --ccx-surface: #ffffff;
+  --ccx-panel: #ffffff;
+  --ccx-fg: #1f2933;
+  --ccx-muted: #6b7b86;
+  --ccx-accent: #57b87b;
+  --ccx-accent-soft: rgba(87, 184, 123, 0.14);
+  --ccx-warn: #d39a2c;
+  --ccx-warn-soft: rgba(211, 154, 44, 0.12);
+  --ccx-border: rgba(31, 41, 51, 0.1);
+  --ccx-border-strong: rgba(31, 41, 51, 0.14);
+  --ccx-shadow: 0 16px 40px rgba(24, 37, 33, 0.12);
+  --ccx-font: Inter, "Segoe UI", sans-serif;
 }
 
 #ccx-root {
@@ -22,7 +27,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  background: linear-gradient(135deg, #10202e, #0f1824);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(242, 246, 243, 0.98));
   border: 1px solid var(--ccx-border);
   border-radius: 14px;
   padding: 10px 12px;
@@ -40,7 +45,7 @@
 #ccx-bar {
   width: 110px;
   height: 8px;
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(31, 41, 51, 0.08);
   border-radius: 6px;
   overflow: hidden;
 }
@@ -48,15 +53,15 @@
 #ccx-bar-fill {
   height: 100%;
   width: 0%;
-  background: linear-gradient(90deg, #35c07a, #46d1ff);
+  background: linear-gradient(90deg, #2e9d6b, #74cf82);
   transition: width 0.2s ease;
 }
 
 #ccx-panel {
   margin-top: 10px;
   width: 320px;
-  background: #0f1a24;
-  border: 1px solid var(--ccx-border);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 249, 247, 0.98));
+  border: 1px solid var(--ccx-border-strong);
   border-radius: 16px;
   box-shadow: var(--ccx-shadow);
   padding: 14px 14px 12px;
@@ -73,6 +78,7 @@
   justify-content: space-between;
   margin: 8px 0;
   font-size: 13px;
+  color: var(--ccx-fg);
 }
 
 .ccx-row strong {
@@ -84,9 +90,9 @@
 }
 
 #ccx-warning {
-  background: rgba(224, 168, 0, 0.12);
-  border: 1px solid rgba(224, 168, 0, 0.35);
-  color: #ffdf8c;
+  background: var(--ccx-warn-soft);
+  border: 1px solid rgba(211, 154, 44, 0.24);
+  color: #8c6515;
   padding: 6px 8px;
   border-radius: 8px;
   font-size: 12px;
@@ -95,7 +101,7 @@
 }
 
 .ccx-section {
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid rgba(31, 41, 51, 0.08);
   padding-top: 10px;
   margin-top: 10px;
 }
@@ -115,13 +121,20 @@
 
 .ccx-control select,
 .ccx-control input {
-  background: #0b131c;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: #ffffff;
+  border: 1px solid rgba(31, 41, 51, 0.12);
   color: var(--ccx-fg);
   border-radius: 8px;
   padding: 6px 8px;
   font-size: 12px;
   width: 140px;
+}
+
+.ccx-control select:focus,
+.ccx-control input:focus {
+  outline: 2px solid rgba(87, 184, 123, 0.24);
+  outline-offset: 1px;
+  border-color: rgba(87, 184, 123, 0.48);
 }
 
 #ccx-actions {
@@ -152,18 +165,24 @@
 
 .ccx-button {
   flex: 1;
-  background: rgba(63, 179, 127, 0.15);
-  border: 1px solid rgba(63, 179, 127, 0.5);
+  background: linear-gradient(180deg, rgba(87, 184, 123, 0.2), rgba(87, 184, 123, 0.12));
+  border: 1px solid rgba(87, 184, 123, 0.34);
   color: var(--ccx-fg);
   border-radius: 10px;
   padding: 8px;
   font-size: 12px;
   cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.ccx-button:hover,
+.ccx-link:hover {
+  transform: translateY(-1px);
 }
 
 .ccx-button.secondary {
-  background: transparent;
-  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(31, 41, 51, 0.03);
+  border-color: rgba(31, 41, 51, 0.12);
 }
 
 #ccx-close {
@@ -178,6 +197,7 @@
   align-items: center;
   font-size: 14px;
   font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .ccx-tag {

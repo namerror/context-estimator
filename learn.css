@@ -1,12 +1,14 @@
 :root {
-  --ccx-bg: #0f1a24;
-  --ccx-panel: #111e2a;
-  --ccx-fg: #e6f0ff;
-  --ccx-muted: #9fb2c8;
-  --ccx-accent: #3fb37f;
-  --ccx-border: rgba(255, 255, 255, 0.12);
-  --ccx-shadow: 0 18px 45px rgba(0, 0, 0, 0.4);
-  --ccx-font: "Space Grotesk", "Segoe UI", sans-serif;
+  --ccx-bg: #f7f9f7;
+  --ccx-panel: #ffffff;
+  --ccx-surface: #f2f6f2;
+  --ccx-fg: #1f2933;
+  --ccx-muted: #6b7b86;
+  --ccx-accent: #57b87b;
+  --ccx-border: rgba(31, 41, 51, 0.1);
+  --ccx-border-strong: rgba(31, 41, 51, 0.14);
+  --ccx-shadow: 0 16px 40px rgba(24, 37, 33, 0.12);
+  --ccx-font: Inter, "Segoe UI", sans-serif;
 }
 
 * {
@@ -16,7 +18,9 @@
 body {
   margin: 0;
   font-family: var(--ccx-font);
-  background: radial-gradient(circle at top, #152636, #0b121a 60%);
+  background:
+    radial-gradient(circle at top, rgba(87, 184, 123, 0.14), transparent 42%),
+    linear-gradient(180deg, #fbfcfb 0%, #f1f5f1 100%);
   color: var(--ccx-fg);
 }
 
@@ -51,8 +55,8 @@ h1 {
 }
 
 .card {
-  background: var(--ccx-panel);
-  border: 1px solid var(--ccx-border);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 249, 247, 0.98));
+  border: 1px solid var(--ccx-border-strong);
   border-radius: 18px;
   padding: 20px;
   margin-bottom: 18px;
@@ -95,7 +99,7 @@ th,
 td {
   text-align: left;
   padding: 10px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(31, 41, 51, 0.08);
   font-size: 13px;
 }
 
@@ -108,7 +112,22 @@ th {
 }
 
 tbody tr:hover {
-  background: rgba(63, 179, 127, 0.08);
+  background: rgba(87, 184, 123, 0.08);
+}
+
+a {
+  color: #2f8f61;
+}
+
+code {
+  background: rgba(31, 41, 51, 0.04);
+  border: 1px solid rgba(31, 41, 51, 0.08);
+  border-radius: 6px;
+  padding: 0.1em 0.35em;
+}
+
+strong {
+  color: var(--ccx-fg);
 }
 
 @media (max-width: 720px) {
