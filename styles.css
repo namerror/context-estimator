@@ -32,7 +32,16 @@
   border-radius: 14px;
   padding: 10px 12px;
   box-shadow: var(--ccx-shadow);
-  cursor: pointer;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+#ccx-root.ccx-dragging #ccx-collapsed {
+  cursor: grabbing;
+}
+
+body.ccx-no-select {
   user-select: none;
 }
 

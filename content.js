@@ -5,6 +5,10 @@
     planTier: "",
     customContextSize: 8000,
     modelContextOverrides: {},
+    overlayPosition: {
+      right: 16,
+      bottom: 16
+    },
     perAttachmentTokens: 200,
     overheadTokens: 500,
     virtualizationStrategy: "USER_GUIDED",
@@ -33,6 +37,7 @@
 
   const STORAGE_KEY = "ccx_settings";
   const DEBOUNCE_MS = 500;
+  const DRAG_THRESHOLD_PX = 6;
   const PRECISE_MAX_CHARS = 250000;
   const URL_POLL_MS = 1000;
   let recalcTimer = null;
@@ -53,6 +58,45 @@
   function safeStorageSet(next) {
     if (!chrome?.storage?.local) return;
     chrome.storage.local.set({ [STORAGE_KEY]: next });
+  }
+
+  function normalizeOverlayPosition(position) {
+    const fallback = DEFAULT_SETTINGS.overlayPosition || { right: 16, bottom: 16 };
+    const right = Number.isFinite(position?.right) && position.right >= 0 ? position.right : fallback.right;
+    const bottom = Number.isFinite(position?.bottom) && position.bottom >= 0 ? position.bottom : fallback.bottom;
+    return { right, bottom };
+  }
+
+  function getOverlayPosition() {
+    const normalized = normalizeOverlayPosition(state.settings.overlayPosition);
+    state.settings.overlayPosition = normalized;
+    return normalized;
+  }
+
+  function clampOverlayPosition(position) {
+    const root = state.ui.root;
+    if (!root) return normalizeOverlayPosition(position);
+    const normalized = normalizeOverlayPosition(position);
+    const rect = root.getBoundingClientRect();
+    const maxRight = Math.max(0, window.innerWidth - rect.width);
+    const maxBottom = Math.max(0, window.innerHeight - rect.height);
+    return {
+      right: Math.min(Math.max(0, normalized.right), maxRight),
+      bottom: Math.min(Math.max(0, normalized.bottom), maxBottom)
+    };
+  }
+
+  function applyOverlayPosition(position) {
+    if (!state.ui.root) return;
+    const next = clampOverlayPosition(position);
+    state.ui.root.style.right = `${Math.round(next.right)}px`;
+    state.ui.root.style.bottom = `${Math.round(next.bottom)}px`;
+    state.settings.overlayPosition = next;
+  }
+
+  function persistOverlayPosition(position) {
+    state.settings.overlayPosition = normalizeOverlayPosition(position);
+    safeStorageSet(state.settings);
   }
 
   function detectModelLabel() {
@@ -453,9 +497,94 @@
 
     const panel = root.querySelector("#ccx-panel");
     const collapsed = root.querySelector("#ccx-collapsed");
+    let dragState = null;
+    let suppressNextToggle = false;
 
-    collapsed.addEventListener("click", () => panel.classList.toggle("ccx-open"));
-    root.querySelector("#ccx-minimize").addEventListener("click", () => panel.classList.remove("ccx-open"));
+    applyOverlayPosition(getOverlayPosition());
+
+    const syncOverlayToViewport = (persist = false) => {
+      const before = getOverlayPosition();
+      applyOverlayPosition(before);
+      const after = getOverlayPosition();
+      if (persist && (before.right !== after.right || before.bottom !== after.bottom)) {
+        persistOverlayPosition(after);
+      }
+    };
+
+    const stopDrag = (persist) => {
+      if (!dragState) return;
+      const { pointerId, moved } = dragState;
+      if (collapsed.hasPointerCapture?.(pointerId)) {
+        collapsed.releasePointerCapture(pointerId);
+      }
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerCancel);
+      root.classList.remove("ccx-dragging");
+      document.body.classList.remove("ccx-no-select");
+      const finalPosition = getOverlayPosition();
+      dragState = null;
+      if (moved) {
+        suppressNextToggle = true;
+        if (persist) persistOverlayPosition(finalPosition);
+      }
+    };
+
+    const onPointerMove = (event) => {
+      if (!dragState || event.pointerId !== dragState.pointerId) return;
+
+      const dx = event.clientX - dragState.startX;
+      const dy = event.clientY - dragState.startY;
+      if (!dragState.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+
+      dragState.moved = true;
+      root.classList.add("ccx-dragging");
+      document.body.classList.add("ccx-no-select");
+      applyOverlayPosition({
+        right: dragState.startPosition.right - dx,
+        bottom: dragState.startPosition.bottom - dy
+      });
+    };
+
+    const onPointerUp = (event) => {
+      if (!dragState || event.pointerId !== dragState.pointerId) return;
+      stopDrag(true);
+    };
+
+    const onPointerCancel = (event) => {
+      if (!dragState || event.pointerId !== dragState.pointerId) return;
+      stopDrag(false);
+    };
+
+    collapsed.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      dragState = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        startPosition: getOverlayPosition(),
+        moved: false
+      };
+      collapsed.setPointerCapture?.(event.pointerId);
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointercancel", onPointerCancel);
+    });
+
+    collapsed.addEventListener("click", (event) => {
+      if (suppressNextToggle) {
+        suppressNextToggle = false;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      panel.classList.toggle("ccx-open");
+      requestAnimationFrame(() => syncOverlayToViewport(false));
+    });
+    root.querySelector("#ccx-minimize").addEventListener("click", () => {
+      panel.classList.remove("ccx-open");
+      requestAnimationFrame(() => syncOverlayToViewport(false));
+    });
 
     root.querySelector("#ccx-refresh").addEventListener("click", () => {
       refreshFromPageState();
@@ -504,6 +633,8 @@
 
     state.ui = {
       root,
+      panel,
+      collapsed,
       percent: root.querySelector("#ccx-percent"),
       barFill: root.querySelector("#ccx-bar-fill"),
       totalTokens: root.querySelector("#ccx-total"),
@@ -516,6 +647,8 @@
       modelSelect,
       methodSelect
     };
+
+    window.addEventListener("resize", () => syncOverlayToViewport(true));
   }
 
   function buildModelOptions(planTier) {

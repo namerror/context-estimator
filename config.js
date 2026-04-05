@@ -6,6 +6,10 @@
     planTier: "",
     customContextSize: 8000,
     modelContextOverrides: {},
+    overlayPosition: {
+      right: 16,
+      bottom: 16
+    },
     perAttachmentTokens: 200,
     overheadTokens: 500,
     virtualizationStrategy: "USER_GUIDED",
