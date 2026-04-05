@@ -17,10 +17,43 @@
   const PLAN_OPTIONS = config.PLAN_OPTIONS || [];
   const MODEL_DEFS = config.MODEL_DEFS || [];
   const LEGACY_MODEL_IDS = config.LEGACY_MODEL_IDS || new Set();
+  const content = window.__ccxContent || {};
+
+  const attachOverlayDrag = content.ui?.attachOverlayDrag;
+  const createOverlayView = content.ui?.createOverlayView;
+  const readPageContext = content.core?.readPageContext;
+  const calculateEstimate = content.core?.calculateEstimate;
+  const buildMethodOptionsFromRegistry = content.core?.buildMethodOptions;
+  const buildModelOptionsFromConfig = content.core?.buildModelOptions;
+  const createScheduler = content.core?.createScheduler;
+  const observeDom = content.core?.observeDom;
+  const observeNavigation = content.core?.observeNavigation;
+
+  if (
+    typeof attachOverlayDrag !== "function" ||
+    typeof createOverlayView !== "function" ||
+    typeof readPageContext !== "function" ||
+    typeof calculateEstimate !== "function" ||
+    typeof buildMethodOptionsFromRegistry !== "function" ||
+    typeof buildModelOptionsFromConfig !== "function" ||
+    typeof createScheduler !== "function" ||
+    typeof observeDom !== "function" ||
+    typeof observeNavigation !== "function"
+  ) {
+    console.error("CCX content modules failed to load");
+    return;
+  }
+
+  const STORAGE_KEY = "ccx_settings";
+  const DEBOUNCE_MS = 500;
+  const DRAG_THRESHOLD_PX = 6;
+  const PRECISE_MAX_CHARS = 250000;
+  const URL_POLL_MS = 1000;
 
   const state = {
     settings: { ...DEFAULT_SETTINGS },
-    ui: {},
+    ui: null,
+    dragController: null,
     modelLabel: "",
     modelId: "",
     pageSupport: "supported_regular_chat",
@@ -35,20 +68,13 @@
     preciseSkipped: false
   };
 
-  const STORAGE_KEY = "ccx_settings";
-  const DEBOUNCE_MS = 500;
-  const DRAG_THRESHOLD_PX = 6;
-  const PRECISE_MAX_CHARS = 250000;
-  const URL_POLL_MS = 1000;
-  let recalcTimer = null;
-  let lastKnownUrl = window.location.href;
-
   function safeStorageGet() {
     return new Promise((resolve) => {
       if (!chrome?.storage?.local) {
         resolve({ ...DEFAULT_SETTINGS });
         return;
       }
+
       chrome.storage.local.get([STORAGE_KEY], (result) => {
         resolve({ ...DEFAULT_SETTINGS, ...(result[STORAGE_KEY] || {}) });
       });
@@ -58,6 +84,10 @@
   function safeStorageSet(next) {
     if (!chrome?.storage?.local) return;
     chrome.storage.local.set({ [STORAGE_KEY]: next });
+  }
+
+  function persistSettings() {
+    safeStorageSet(state.settings);
   }
 
   function normalizeOverlayPosition(position) {
@@ -74,12 +104,14 @@
   }
 
   function clampOverlayPosition(position) {
-    const root = state.ui.root;
+    const root = state.ui?.refs?.root;
     if (!root) return normalizeOverlayPosition(position);
+
     const normalized = normalizeOverlayPosition(position);
     const rect = root.getBoundingClientRect();
     const maxRight = Math.max(0, window.innerWidth - rect.width);
     const maxBottom = Math.max(0, window.innerHeight - rect.height);
+
     return {
       right: Math.min(Math.max(0, normalized.right), maxRight),
       bottom: Math.min(Math.max(0, normalized.bottom), maxBottom)
@@ -87,164 +119,60 @@
   }
 
   function applyOverlayPosition(position) {
-    if (!state.ui.root) return;
+    const root = state.ui?.refs?.root;
+    if (!root) return normalizeOverlayPosition(position);
+
     const next = clampOverlayPosition(position);
-    state.ui.root.style.right = `${Math.round(next.right)}px`;
-    state.ui.root.style.bottom = `${Math.round(next.bottom)}px`;
+    root.style.right = `${Math.round(next.right)}px`;
+    root.style.bottom = `${Math.round(next.bottom)}px`;
     state.settings.overlayPosition = next;
+    return next;
   }
 
   function persistOverlayPosition(position) {
     state.settings.overlayPosition = normalizeOverlayPosition(position);
-    safeStorageSet(state.settings);
+    persistSettings();
   }
 
-  function detectModelLabel() {
-    // Placeholder for future model detection.
-    return "";
+  function getEstimatorRegistry() {
+    return window.__ccxEstimatorRegistry || null;
   }
 
-  function normalizeModelId(label) {
-    const l = label.toLowerCase();
-    if (/\bo3\b/.test(l)) return "o3";
-    if (l.includes("gpt-5 mini") || l.includes("gpt-5-mini") || l.includes("5 mini")) return "gpt-5-mini";
-    if (l.includes("5.4") && l.includes("pro")) return "gpt-5.4-pro";
-    if (l.includes("5.4")) return "gpt-5.4-thinking";
-    if (l.includes("5.3") || (l.includes("instant") && l.includes("5"))) return "gpt-5.3-instant";
-    if (l.includes("5.2") && l.includes("instant")) return "gpt-5.2-instant";
-    if (l.includes("5.2") && (l.includes("thinking") || l.includes("pro"))) return "gpt-5.2-thinking";
-    if (l.includes("4o")) return "gpt-4o";
-    if (l.includes("4.1 mini") || l.includes("4.1-mini")) return "gpt-4.1-mini";
-    if (l.includes("4.1")) return "gpt-4.1";
-    if (l.includes("4o mini") || l.includes("4o-mini")) return "gpt-4o-mini";
-    if (l.includes("4 32") || l.includes("4-32")) return "gpt-4-32k";
-    if (l.includes("gpt-4") || l.includes("4")) return "gpt-4";
-    if (l.includes("3.5") || l.includes("gpt-3")) return "gpt-3.5";
-    return "unknown";
+  function buildModelOptions(planTier) {
+    return buildModelOptionsFromConfig({
+      planTier,
+      modelDefs: MODEL_DEFS,
+      legacyModelIds: LEGACY_MODEL_IDS
+    });
   }
 
-  function getModelDef(modelId) {
-    return MODEL_DEFS.find((model) => model.id === modelId) || null;
+  function buildMethodOptions() {
+    return buildMethodOptionsFromRegistry({
+      estimatorRegistry: getEstimatorRegistry()
+    });
   }
 
-  function getPlanCap(modelId, planTier) {
-    const model = getModelDef(modelId);
-    if (!model) return null;
-    if (model.caps && model.caps[planTier]) return model.caps[planTier];
-    if (model.contextWindow) return model.contextWindow;
-    return null;
-  }
+  function sanitizeSettings() {
+    state.settings.overlayPosition = normalizeOverlayPosition(state.settings.overlayPosition);
 
-  function getOverrideTargetId() {
-    if (state.settings.modelOverride === "custom") return "custom";
-    if (state.settings.modelOverride === "auto") {
-      return state.modelId && state.modelId !== "unknown" ? state.modelId : null;
-    }
-    return state.settings.modelOverride;
-  }
-
-  function getContextSize(modelId) {
-    if (modelId === "custom") return state.settings.customContextSize || DEFAULT_SETTINGS.customContextSize;
-    const overrides = state.settings.modelContextOverrides || {};
-    const override = overrides[modelId];
-    if (Number.isFinite(override) && override > 0) return override;
-    const planCap = getPlanCap(modelId, state.settings.planTier);
-    if (Number.isFinite(planCap) && planCap > 0) return planCap;
-    return state.settings.customContextSize || DEFAULT_SETTINGS.customContextSize;
-  }
-
-  function normalizeText(text) {
-    return text.replace(/\s+/g, " ").trim();
-  }
-
-  function findMessageNodes() {
-    const nodes = Array.from(document.querySelectorAll("[data-message-author-role]"));
-    if (nodes.length) return nodes;
-    return Array.from(document.querySelectorAll("[data-testid='conversation-turn']"));
-  }
-
-  function parseConversation() {
-    const messageNodes = findMessageNodes();
-    const messages = [];
-
-    for (const node of messageNodes) {
-      const role = node.getAttribute("data-message-author-role") || "unknown";
-      const text = normalizeText(node.innerText || "");
-      if (!text) continue;
-      messages.push({ role, text });
+    if (!PLAN_OPTIONS.some((option) => option.id === state.settings.planTier)) {
+      state.settings.planTier = "";
     }
 
-    return { messages };
-  }
-
-  function findScrollContainer() {
-    const main = document.querySelector("main");
-    if (!main) return null;
-    const candidates = Array.from(main.querySelectorAll("div"));
-    let best = null;
-    for (const el of candidates) {
-      if (el.scrollHeight > el.clientHeight + 200) {
-        best = el;
-        break;
-      }
-    }
-    return best;
-  }
-
-  function detectIncompleteHistory() {
-    const container = findScrollContainer();
-    if (container && container.scrollTop > 50) return true;
-
-    const loadButtons = Array.from(document.querySelectorAll("button, a"));
-    const hasLoadMore = loadButtons.some((el) => /load more|show more|scroll/i.test((el.textContent || "").toLowerCase()));
-    if (hasLoadMore) return true;
-
-    return false;
-  }
-
-  function isReadyToEstimate() {
-    return Boolean(state.settings.planTier && state.settings.modelOverride);
-  }
-
-  function isCanonicalChatPath(pathname) {
-    return /^\/c\/[^/]+\/?$/.test(pathname);
-  }
-
-  function isNewChatPath(pathname) {
-    return pathname === "/";
-  }
-
-  function hasRegularChatSignals() {
-    if (findMessageNodes().length > 0) return true;
-    if (document.querySelector("#prompt-textarea")) return true;
-    if (document.querySelector("main form textarea, main form [contenteditable='true']")) return true;
-    return false;
-  }
-
-  function detectPageSupport() {
-    const { pathname } = window.location;
-    const pathLooksSupported = isCanonicalChatPath(pathname) || isNewChatPath(pathname);
-
-    if (!pathLooksSupported) {
-      return {
-        status: "unsupported_project_or_nonchat",
-        warning: "Unsupported page. Context Counter works on regular ChatGPT chats only (including new chat)."
-      };
+    const modelOptions = buildModelOptions(state.settings.planTier);
+    if (!modelOptions.some((option) => option.id === state.settings.modelOverride)) {
+      state.settings.modelOverride = "";
     }
 
-    if (!hasRegularChatSignals()) {
-      return {
-        status: "unsupported_unknown_layout",
-        warning: "Unsupported chat layout. Open a regular chat tab to estimate context."
-      };
+    const methodOptions = buildMethodOptions();
+    if (!methodOptions.some((option) => option.id === state.settings.estimationMethod)) {
+      state.settings.estimationMethod = DEFAULT_SETTINGS.estimationMethod || "fast";
     }
-
-    return { status: "supported_regular_chat", warning: "" };
   }
 
-  function applyUnsupportedState(pageSupport, warning) {
-    state.pageSupport = pageSupport;
-    state.pageWarning = warning;
+  function applyUnsupportedState(pageContext) {
+    state.pageSupport = pageContext.supportStatus;
+    state.pageWarning = pageContext.warning;
     state.modelLabel = "Unsupported";
     state.modelId = "";
     state.contextSize = 0;
@@ -257,72 +185,42 @@
     state.preciseSkipped = false;
   }
 
-  function calculateEstimate() {
-    state.pageSupport = "supported_regular_chat";
-    state.pageWarning = "";
-    if (!isReadyToEstimate()) {
-      state.modelLabel = "Not selected";
-      state.modelId = "";
-      state.contextSize = 0;
-      state.estimate = {
-        chatTokens: 0,
-        overheadTokens: 0,
-        totalTokens: 0
-      };
-      state.isIncomplete = false;
-      state.preciseSkipped = false;
-      return;
-    }
-    const { messages } = parseConversation();
-    const chatText = messages.map((m) => m.text).join("\n\n");
-    const selectedMethod = state.settings.estimationMethod;
-    const shouldSkipPrecise = selectedMethod === "precise" && chatText.length > PRECISE_MAX_CHARS;
-    state.preciseSkipped = shouldSkipPrecise;
-
-    const detectedLabel = detectModelLabel();
-    state.modelLabel = detectedLabel || "Manual selection";
-    state.modelId = state.settings.modelOverride;
-
-    state.contextSize = getContextSize(state.modelId);
-
-    const estimatorId = shouldSkipPrecise ? "fast" : selectedMethod;
-    const estimator = getEstimator(estimatorId) || getEstimator("fast");
-    const estimatorInput = {
-      text: chatText,
-      modelId: state.modelId,
+  function applyEstimateState(pageContext) {
+    const result = calculateEstimate({
+      settings: state.settings,
+      pageContext,
+      estimatorRegistry: getEstimatorRegistry(),
       tokenizer: window.__ccxTokenizer,
-      settings: state.settings
-    };
-    const result = estimator ? estimator.estimate(estimatorInput) : { chatTokens: null };
-    let chatTokens = Number.isFinite(result?.chatTokens) ? result.chatTokens : null;
-    if (chatTokens === null && estimator && estimator.id !== "fast") {
-      const fallback = getEstimator("fast");
-      const fallbackResult = fallback ? fallback.estimate(estimatorInput) : { chatTokens: 0 };
-      chatTokens = Number.isFinite(fallbackResult?.chatTokens) ? fallbackResult.chatTokens : 0;
-    }
-    if (chatTokens === null) chatTokens = 0;
+      config: {
+        DEFAULT_SETTINGS,
+        MODEL_DEFS,
+        LEGACY_MODEL_IDS,
+        PRECISE_MAX_CHARS
+      }
+    });
 
-    const overheadTokens = state.settings.overheadTokens;
-    const totalTokens = chatTokens + overheadTokens;
-
-    state.estimate = {
-      chatTokens,
-      overheadTokens,
-      totalTokens
-    };
-
-    state.isIncomplete = detectIncompleteHistory();
+    state.pageSupport = pageContext.supportStatus;
+    state.pageWarning = pageContext.warning;
+    state.modelLabel = result.modelLabel;
+    state.modelId = result.modelId;
+    state.contextSize = result.contextSize;
+    state.estimate = result.estimate;
+    state.isIncomplete = pageContext.isIncomplete;
+    state.preciseSkipped = result.preciseSkipped;
   }
 
   function refreshFromPageState() {
-    const support = detectPageSupport();
-    if (support.status !== "supported_regular_chat") {
-      applyUnsupportedState(support.status, support.warning);
-      updateUI();
+    sanitizeSettings();
+
+    const pageContext = readPageContext();
+    if (pageContext.supportStatus !== "supported_regular_chat") {
+      applyUnsupportedState(pageContext);
+      render();
       return;
     }
-    calculateEstimate();
-    updateUI();
+
+    applyEstimateState(pageContext);
+    render();
   }
 
   function formatNumber(value) {
@@ -334,42 +232,9 @@
     return Math.min(100, Math.round((state.estimate.totalTokens / state.contextSize) * 100));
   }
 
-  function updateUI() {
-    if (!state.ui.root) return;
-
-    const isSupported = state.pageSupport === "supported_regular_chat";
-    if (!isSupported) {
-      state.ui.percent.textContent = "Unsupported";
-      state.ui.barFill.style.width = "0%";
-      state.ui.totalTokens.textContent = "Unsupported";
-      state.ui.chatTokens.textContent = "Unsupported";
-      state.ui.overheadTokens.textContent = "Unsupported";
-      state.ui.modelLabel.textContent = "Unsupported";
-      state.ui.contextSize.textContent = "Unsupported";
-      state.ui.warning.style.display = "block";
-      state.ui.warning.innerHTML = `<div>${state.pageWarning}</div>`;
-      updateModelSelect();
-      updateMethodSelect();
-      return;
-    }
-
-    const percent = percentUsed();
-    state.ui.percent.textContent = `${percent}% used`;
-    state.ui.barFill.style.width = `${percent}%`;
-
-    const ready = isReadyToEstimate();
-    if (ready) {
-      state.ui.totalTokens.textContent = formatNumber(state.estimate.totalTokens);
-      state.ui.chatTokens.textContent = formatNumber(state.estimate.chatTokens);
-      state.ui.overheadTokens.textContent = formatNumber(state.estimate.overheadTokens);
-      state.ui.modelLabel.textContent = state.modelLabel || "Unknown";
-      state.ui.contextSize.textContent = formatNumber(state.contextSize);
-    } else {
-      state.ui.totalTokens.textContent = "—";
-      state.ui.chatTokens.textContent = "—";
-      state.ui.overheadTokens.textContent = "—";
-      state.ui.modelLabel.textContent = "Not selected";
-      state.ui.contextSize.textContent = "—";
+  function getWarnings() {
+    if (state.pageSupport !== "supported_regular_chat") {
+      return state.pageWarning ? [state.pageWarning] : [];
     }
 
     const warnings = [];
@@ -379,348 +244,146 @@
     if (state.preciseSkipped) {
       warnings.push("Precise tokenization skipped (chat too large); using Fast estimation.");
     }
-    state.ui.warning.style.display = warnings.length ? "block" : "none";
-    state.ui.warning.innerHTML = warnings.map((w) => `<div>${w}</div>`).join("");
-
-    updateModelSelect();
-    updateMethodSelect();
+    return warnings;
   }
 
-  function updateModelSelect() {
-    const select = state.ui.modelSelect;
-    if (!select) return;
-    if (state.settings.planTier && !PLAN_OPTIONS.some((opt) => opt.id === state.settings.planTier)) {
-      state.settings.planTier = "";
-      safeStorageSet(state.settings);
+  function buildViewModel() {
+    const isSupported = state.pageSupport === "supported_regular_chat";
+    const ready = Boolean(state.settings.planTier && state.settings.modelOverride);
+    const percent = isSupported ? percentUsed() : 0;
+
+    return {
+      pageSupport: state.pageSupport,
+      percentText: isSupported ? `${percent}% used` : "Unsupported",
+      barFillPercent: percent,
+      totalTokensText: isSupported
+        ? ready
+          ? formatNumber(state.estimate.totalTokens)
+          : "—"
+        : "Unsupported",
+      chatTokensText: isSupported
+        ? ready
+          ? formatNumber(state.estimate.chatTokens)
+          : "—"
+        : "Unsupported",
+      overheadTokensText: isSupported
+        ? ready
+          ? formatNumber(state.estimate.overheadTokens)
+          : "—"
+        : "Unsupported",
+      modelLabelText: isSupported
+        ? ready
+          ? state.modelLabel || "Unknown"
+          : "Not selected"
+        : "Unsupported",
+      contextSizeText: isSupported
+        ? ready
+          ? formatNumber(state.contextSize)
+          : "—"
+        : "Unsupported",
+      warnings: getWarnings(),
+      selections: {
+        planTier: state.settings.planTier,
+        modelOverride: state.settings.modelOverride,
+        estimationMethod: state.settings.estimationMethod
+      }
+    };
+  }
+
+  function render() {
+    state.ui?.render(buildViewModel());
+  }
+
+  function handleLearn() {
+    if (chrome?.runtime?.sendMessage) {
+      chrome.runtime.sendMessage({ type: "ccx-open-learn" });
+      return;
     }
-    if (state.ui.planSelect) state.ui.planSelect.value = state.settings.planTier;
-    const nextOptions = buildModelOptions(state.settings.planTier);
-    select.innerHTML = nextOptions.map((opt) => `<option value="${opt.id}">${opt.label}</option>`).join("");
-    if (state.settings.modelOverride && !nextOptions.some((opt) => opt.id === state.settings.modelOverride)) {
+
+    const url = chrome?.runtime?.getURL ? chrome.runtime.getURL("learn.html") : "learn.html";
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  function handlePlanChange(planTier) {
+    state.settings.planTier = PLAN_OPTIONS.some((option) => option.id === planTier) ? planTier : "";
+
+    const modelOptions = buildModelOptions(state.settings.planTier);
+    if (!modelOptions.some((option) => option.id === state.settings.modelOverride)) {
       state.settings.modelOverride = "";
-      safeStorageSet(state.settings);
-    }
-    select.value = state.settings.modelOverride;
-  }
-
-  function getEstimatorRegistry() {
-    return window.__ccxEstimatorRegistry || null;
-  }
-
-  function getEstimator(id) {
-    return getEstimatorRegistry()?.getEstimator?.(id) || null;
-  }
-
-  function buildMethodOptions() {
-    const registry = getEstimatorRegistry();
-    const estimators = registry?.listEstimators?.() || [];
-    const options = estimators.map((est) => ({
-      id: est.id,
-      label: est.label || est.id
-    }));
-    if (!options.length) {
-      options.push({ id: "fast", label: "Fast estimation" });
-      options.push({ id: "precise", label: "Precise (tokenizer)" });
-      // options.push({ id: "methodB", label: "Method B (placeholder)" });
-    }
-    return options;
-  }
-
-  function updateMethodSelect() {
-    const select = state.ui.methodSelect;
-    if (!select) return;
-    const options = buildMethodOptions();
-    select.innerHTML = options.map((opt) => `<option value="${opt.id}">${opt.label}</option>`).join("");
-    if (!options.some((opt) => opt.id === state.settings.estimationMethod)) {
-      state.settings.estimationMethod = "fast";
-      safeStorageSet(state.settings);
-    }
-    select.value = state.settings.estimationMethod;
-  }
-
-  function scheduleRecalc() {
-    if (recalcTimer) clearTimeout(recalcTimer);
-    recalcTimer = setTimeout(() => {
-      refreshFromPageState();
-    }, DEBOUNCE_MS);
-  }
-
-  function buildOverlay() {
-    if (document.getElementById("ccx-root")) return;
-    const root = document.createElement("div");
-    root.id = "ccx-root";
-
-    root.innerHTML = `
-      <div id="ccx-collapsed">
-        <div id="ccx-percent">0% used</div>
-        <div id="ccx-bar"><div id="ccx-bar-fill"></div></div>
-      </div>
-      <div id="ccx-panel">
-        <div class="ccx-title">
-          <span>Context Estimate</span>
-        </div>
-        <div class="ccx-row"><span class="ccx-muted">Total tokens</span><strong id="ccx-total">0</strong></div>
-        <div class="ccx-row"><span class="ccx-muted">Chat text</span><span id="ccx-chat">0</span></div>
-        <div class="ccx-row"><span class="ccx-muted">Attachments</span><span id="ccx-attach">Not implemented</span></div>
-        <div class="ccx-row"><span class="ccx-muted">Overhead</span><span id="ccx-overhead">0</span></div>
-        <div class="ccx-row"><span class="ccx-muted">Model detected</span><span id="ccx-model">Unknown</span></div>
-        <div class="ccx-row"><span class="ccx-muted">Context size</span><span id="ccx-context">0</span></div>
-        <div id="ccx-warning">History may be incomplete. Scroll up to load more for a better estimate.</div>
-
-        <div class="ccx-section">
-          <div class="ccx-tag">Overrides</div>
-          <div class="ccx-control">
-            <label for="ccx-plan-select">Plan</label>
-            <select id="ccx-plan-select"></select>
-          </div>
-          <div class="ccx-control">
-            <label for="ccx-model-select">Model</label>
-            <select id="ccx-model-select"></select>
-          </div>
-          <div class="ccx-control">
-            <label for="ccx-method-select">Estimation</label>
-            <select id="ccx-method-select"></select>
-          </div>
-        </div>
-
-        <div id="ccx-actions">
-          <button class="ccx-button" id="ccx-refresh">Recalculate</button>
-          <button class="ccx-button secondary" id="ccx-minimize">Minimize</button>
-        </div>
-        <div id="ccx-footer">
-          <button class="ccx-link" id="ccx-learn">Learn how it works</button>
-        </div>
-      </div>
-    `;
-
-    document.body.appendChild(root);
-
-    const panel = root.querySelector("#ccx-panel");
-    const collapsed = root.querySelector("#ccx-collapsed");
-    let dragState = null;
-    let suppressNextToggle = false;
-
-    applyOverlayPosition(getOverlayPosition());
-
-    const syncOverlayToViewport = (persist = false) => {
-      const before = getOverlayPosition();
-      applyOverlayPosition(before);
-      const after = getOverlayPosition();
-      if (persist && (before.right !== after.right || before.bottom !== after.bottom)) {
-        persistOverlayPosition(after);
-      }
-    };
-
-    const stopDrag = (persist) => {
-      if (!dragState) return;
-      const { pointerId, moved } = dragState;
-      if (collapsed.hasPointerCapture?.(pointerId)) {
-        collapsed.releasePointerCapture(pointerId);
-      }
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-      window.removeEventListener("pointercancel", onPointerCancel);
-      root.classList.remove("ccx-dragging");
-      document.body.classList.remove("ccx-no-select");
-      const finalPosition = getOverlayPosition();
-      dragState = null;
-      if (moved) {
-        suppressNextToggle = true;
-        if (persist) persistOverlayPosition(finalPosition);
-      }
-    };
-
-    const onPointerMove = (event) => {
-      if (!dragState || event.pointerId !== dragState.pointerId) return;
-
-      const dx = event.clientX - dragState.startX;
-      const dy = event.clientY - dragState.startY;
-      if (!dragState.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
-
-      dragState.moved = true;
-      root.classList.add("ccx-dragging");
-      document.body.classList.add("ccx-no-select");
-      applyOverlayPosition({
-        right: dragState.startPosition.right - dx,
-        bottom: dragState.startPosition.bottom - dy
-      });
-    };
-
-    const onPointerUp = (event) => {
-      if (!dragState || event.pointerId !== dragState.pointerId) return;
-      stopDrag(true);
-    };
-
-    const onPointerCancel = (event) => {
-      if (!dragState || event.pointerId !== dragState.pointerId) return;
-      stopDrag(false);
-    };
-
-    collapsed.addEventListener("pointerdown", (event) => {
-      if (event.pointerType === "mouse" && event.button !== 0) return;
-      dragState = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-        startPosition: getOverlayPosition(),
-        moved: false
-      };
-      collapsed.setPointerCapture?.(event.pointerId);
-      window.addEventListener("pointermove", onPointerMove);
-      window.addEventListener("pointerup", onPointerUp);
-      window.addEventListener("pointercancel", onPointerCancel);
-    });
-
-    collapsed.addEventListener("click", (event) => {
-      if (suppressNextToggle) {
-        suppressNextToggle = false;
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-      panel.classList.toggle("ccx-open");
-      requestAnimationFrame(() => syncOverlayToViewport(false));
-    });
-    root.querySelector("#ccx-minimize").addEventListener("click", () => {
-      panel.classList.remove("ccx-open");
-      requestAnimationFrame(() => syncOverlayToViewport(false));
-    });
-
-    root.querySelector("#ccx-refresh").addEventListener("click", () => {
-      refreshFromPageState();
-    });
-
-    root.querySelector("#ccx-learn").addEventListener("click", () => {
-      if (chrome?.runtime?.sendMessage) {
-        chrome.runtime.sendMessage({ type: "ccx-open-learn" });
-        return;
-      }
-      const url = chrome?.runtime?.getURL ? chrome.runtime.getURL("learn.html") : "learn.html";
-      window.open(url, "_blank", "noopener,noreferrer");
-    });
-
-    const planSelect = root.querySelector("#ccx-plan-select");
-    planSelect.innerHTML = [
-      `<option value="" disabled>Select plan</option>`,
-      ...PLAN_OPTIONS.map((opt) => `<option value="${opt.id}">${opt.label}</option>`)
-    ].join("");
-    planSelect.addEventListener("change", (event) => {
-      state.settings.planTier = event.target.value;
-      safeStorageSet(state.settings);
-      updateModelSelect();
-      refreshFromPageState();
-    });
-
-    const modelSelect = root.querySelector("#ccx-model-select");
-    modelSelect.innerHTML = buildModelOptions(state.settings.planTier)
-      .map((opt) => `<option value="${opt.id}">${opt.label}</option>`)
-      .join("");
-    modelSelect.addEventListener("change", (event) => {
-      state.settings.modelOverride = event.target.value;
-      safeStorageSet(state.settings);
-      refreshFromPageState();
-    });
-
-    const methodSelect = root.querySelector("#ccx-method-select");
-    methodSelect.innerHTML = buildMethodOptions()
-      .map((opt) => `<option value="${opt.id}">${opt.label}</option>`)
-      .join("");
-    methodSelect.addEventListener("change", (event) => {
-      state.settings.estimationMethod = event.target.value;
-      safeStorageSet(state.settings);
-      refreshFromPageState();
-    });
-
-    state.ui = {
-      root,
-      panel,
-      collapsed,
-      percent: root.querySelector("#ccx-percent"),
-      barFill: root.querySelector("#ccx-bar-fill"),
-      totalTokens: root.querySelector("#ccx-total"),
-      chatTokens: root.querySelector("#ccx-chat"),
-      overheadTokens: root.querySelector("#ccx-overhead"),
-      modelLabel: root.querySelector("#ccx-model"),
-      contextSize: root.querySelector("#ccx-context"),
-      warning: root.querySelector("#ccx-warning"),
-      planSelect,
-      modelSelect,
-      methodSelect
-    };
-
-    window.addEventListener("resize", () => syncOverlayToViewport(true));
-  }
-
-  function buildModelOptions(planTier) {
-    if (!planTier) {
-      return [{ id: "", label: "Select model" }];
-    }
-    const allowedIds = new Set();
-    if (planTier === "Free" || planTier === "Go") {
-      allowedIds.add("gpt-5.3-instant");
-    } else if (planTier === "Plus") {
-      allowedIds.add("gpt-5.3-instant");
-      allowedIds.add("gpt-5.4-thinking");
-      allowedIds.add("gpt-5.4-pro");
-      LEGACY_MODEL_IDS.forEach((id) => allowedIds.add(id));
-    } else {
-      MODEL_DEFS.forEach((model) => allowedIds.add(model.id));
     }
 
-    const allowedModels = MODEL_DEFS.filter((model) => allowedIds.has(model.id)).map((model) => ({
-      id: model.id,
-      label: model.label
-    }));
-
-    return [{ id: "", label: "Select model" }, ...allowedModels];
+    persistSettings();
+    refreshFromPageState();
   }
 
-  function observeDom() {
-    const container = document.querySelector("main") || document.body;
-    const observer = new MutationObserver(() => scheduleRecalc());
-    observer.observe(container, { childList: true, subtree: true, characterData: true });
+  function handleModelChange(modelId) {
+    state.settings.modelOverride = modelId;
+    persistSettings();
+    refreshFromPageState();
   }
 
-  function observeNavigation() {
-    const emitLocationChange = () => {
-      window.dispatchEvent(new Event("ccx-locationchange"));
-    };
+  function handleMethodChange(methodId) {
+    const methodOptions = buildMethodOptions();
+    state.settings.estimationMethod = methodOptions.some((option) => option.id === methodId)
+      ? methodId
+      : DEFAULT_SETTINGS.estimationMethod || "fast";
 
-    const wrapHistoryMethod = (method) => {
-      const original = history[method];
-      if (typeof original !== "function") return;
-      history[method] = function wrappedHistoryMethod(...args) {
-        const result = original.apply(this, args);
-        emitLocationChange();
-        return result;
-      };
-    };
-
-    wrapHistoryMethod("pushState");
-    wrapHistoryMethod("replaceState");
-
-    window.addEventListener("popstate", emitLocationChange);
-    window.addEventListener("hashchange", emitLocationChange);
-    window.addEventListener("ccx-locationchange", scheduleRecalc);
-
-    window.setInterval(() => {
-      const currentUrl = window.location.href;
-      if (currentUrl === lastKnownUrl) return;
-      lastKnownUrl = currentUrl;
-      scheduleRecalc();
-    }, URL_POLL_MS);
+    persistSettings();
+    refreshFromPageState();
   }
 
   async function init() {
     state.settings = await safeStorageGet();
-    buildOverlay();
+    sanitizeSettings();
+
+    state.ui = createOverlayView({
+      planOptions: PLAN_OPTIONS,
+      getModelOptions: buildModelOptions,
+      getMethodOptions: buildMethodOptions,
+      onRefresh: refreshFromPageState,
+      onLearn: handleLearn,
+      onPlanChange: handlePlanChange,
+      onModelChange: handleModelChange,
+      onMethodChange: handleMethodChange
+    });
+
+    state.dragController = attachOverlayDrag({
+      root: state.ui.refs.root,
+      handle: state.ui.refs.collapsed,
+      thresholdPx: DRAG_THRESHOLD_PX,
+      getPosition: getOverlayPosition,
+      applyPosition: applyOverlayPosition,
+      persistPosition: persistOverlayPosition
+    });
+
+    state.ui.refs.root.addEventListener("ccx:overlaylayoutchange", () => {
+      state.dragController?.syncToViewport(false);
+    });
+
+    const scheduler = createScheduler({
+      delayMs: DEBOUNCE_MS,
+      onRun: refreshFromPageState
+    });
+    const domObserver = observeDom({
+      onChange: () => scheduler.schedule()
+    });
+    const navigationObserver = observeNavigation({
+      onChange: () => scheduler.schedule(),
+      pollMs: URL_POLL_MS
+    });
+
+    window.addEventListener("beforeunload", () => {
+      state.dragController?.destroy();
+      scheduler.destroy();
+      domObserver.disconnect();
+      navigationObserver.disconnect();
+    }, { once: true });
+
     refreshFromPageState();
-    observeDom();
-    observeNavigation();
   }
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
+    document.addEventListener("DOMContentLoaded", init, { once: true });
   } else {
     init();
   }

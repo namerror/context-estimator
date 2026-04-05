@@ -12,6 +12,7 @@
       "matches": ["https://chatgpt.com/*"],
       "js": [
         "config.js",
+        "content/namespace.js",
         "vendor/gpt-tokenizer/o200k_base.js",
         "vendor/gpt-tokenizer/cl100k_base.js",
         "tokenizers/ccx-tokenizer.js",
@@ -19,6 +20,11 @@
         "estimators/fast.js",
         "estimators/precise.js",
         "estimators/method-b.js",
+        "content/ui/overlay-drag.js",
+        "content/ui/overlay-view.js",
+        "content/core/page-context.js",
+        "content/core/estimate-engine.js",
+        "content/core/runtime-observers.js",
         "content.js"
       ],
       "css": ["styles.css"],

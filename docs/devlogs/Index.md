@@ -2,6 +2,7 @@
 
 Newest first.
 
+- 2026-04-05 codex content-modules - docs/devlogs/2026-04-05-codex-content-modules.md
 - 2026-04-04 codex draggable-overlay-handle - docs/devlogs/2026-04-04-codex-draggable-overlay-handle.md
 - 2026-04-03 codex regular-chat-auto-detect - docs/devlogs/2026-04-03-codex-regular-chat-auto-detect.md
 - 2026-04-01 codex prepare-beta-release - docs/devlogs/2026-04-01-codex-prepare-beta-release.md
