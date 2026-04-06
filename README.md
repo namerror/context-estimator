@@ -1,4 +1,4 @@
-# ChatGPT Context Counter
+# ChatGPT Context Estimator
 
 `ChatGPT Context Counter` is a Chrome/Chromium extension that estimates how much of the current ChatGPT conversation context is in use. It adds a small overlay on `chatgpt.com` with a percentage, token estimate, and a basic breakdown.
 
