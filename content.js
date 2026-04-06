@@ -97,24 +97,60 @@
     return { right, bottom };
   }
 
+  function clampOffset(value, max) {
+    return Math.min(Math.max(0, value), Math.max(0, max));
+  }
+
   function getOverlayPosition() {
     const normalized = normalizeOverlayPosition(state.settings.overlayPosition);
     state.settings.overlayPosition = normalized;
     return normalized;
   }
 
-  function clampOverlayPosition(position) {
+  function getOverlayMetrics() {
     const root = state.ui?.refs?.root;
-    if (!root) return normalizeOverlayPosition(position);
+    const collapsed = state.ui?.refs?.collapsed;
+    if (!root || !collapsed) {
+      return {
+        rootWidth: 0,
+        rootHeight: 0,
+        collapsedWidth: 0,
+        collapsedHeight: 0,
+        anchorOffsetRight: 0,
+        anchorOffsetBottom: 0
+      };
+    }
 
-    const normalized = normalizeOverlayPosition(position);
-    const rect = root.getBoundingClientRect();
-    const maxRight = Math.max(0, window.innerWidth - rect.width);
-    const maxBottom = Math.max(0, window.innerHeight - rect.height);
+    const rootRect = root.getBoundingClientRect();
+    const collapsedRect = collapsed.getBoundingClientRect();
 
     return {
-      right: Math.min(Math.max(0, normalized.right), maxRight),
-      bottom: Math.min(Math.max(0, normalized.bottom), maxBottom)
+      rootWidth: rootRect.width,
+      rootHeight: rootRect.height,
+      collapsedWidth: collapsedRect.width,
+      collapsedHeight: collapsedRect.height,
+      anchorOffsetRight: Math.max(0, rootRect.right - collapsedRect.right),
+      anchorOffsetBottom: Math.max(0, rootRect.bottom - collapsedRect.bottom)
+    };
+  }
+
+  function clampOverlayAnchor(position) {
+    const normalized = normalizeOverlayPosition(position);
+    const metrics = getOverlayMetrics();
+
+    return {
+      right: clampOffset(normalized.right, window.innerWidth - metrics.collapsedWidth),
+      bottom: clampOffset(normalized.bottom, window.innerHeight - metrics.collapsedHeight)
+    };
+  }
+
+  function getRenderedOverlayPosition(anchorPosition) {
+    const metrics = getOverlayMetrics();
+    const anchor = normalizeOverlayPosition(anchorPosition);
+
+    return {
+      right: clampOffset(anchor.right - metrics.anchorOffsetRight, window.innerWidth - metrics.rootWidth),
+      bottom: clampOffset(anchor.bottom - metrics.anchorOffsetBottom, window.innerHeight - metrics.rootHeight)
     };
   }
 
@@ -122,15 +158,18 @@
     const root = state.ui?.refs?.root;
     if (!root) return normalizeOverlayPosition(position);
 
-    const next = clampOverlayPosition(position);
-    root.style.right = `${Math.round(next.right)}px`;
-    root.style.bottom = `${Math.round(next.bottom)}px`;
-    state.settings.overlayPosition = next;
-    return next;
+    // Persist the collapsed bar anchor while rendering the full overlay around it.
+    const anchor = clampOverlayAnchor(position);
+    const rendered = getRenderedOverlayPosition(anchor);
+
+    root.style.right = `${Math.round(rendered.right)}px`;
+    root.style.bottom = `${Math.round(rendered.bottom)}px`;
+    state.settings.overlayPosition = anchor;
+    return anchor;
   }
 
   function persistOverlayPosition(position) {
-    state.settings.overlayPosition = normalizeOverlayPosition(position);
+    state.settings.overlayPosition = clampOverlayAnchor(position);
     persistSettings();
   }
 
