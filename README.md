@@ -82,3 +82,67 @@ See `PRIVACY.md` for the full privacy policy.
 ## Dev Logs
 
 Agent session logs live in `docs/devlogs/`. See `docs/devlogs/README.md` for the format and `docs/devlogs/Index.md` for the index.
+
+## Repo Structure
+
+- `manifest.json`, `config.js`, `background.js`: extension entrypoints and shared runtime configuration.
+- `content.js`, `content/namespace.js`, `content/core/*`, `content/ui/*`: the in-page runtime loaded on `chatgpt.com`.
+- `estimators/*`, `tokenizers/ccx-tokenizer.js`, `vendor/gpt-tokenizer/*`: token estimation and bundled tokenizer support.
+- `styles.css`, `learn.html`, `learn.css`, `scripts/*`, `docs/*`: UI styling, explainer page, tooling, and project docs.
+
+Main program flow:
+
+1. `manifest.json` injects the content-script stack on `https://chatgpt.com/*` and registers `background.js` as the MV3 service worker.
+2. `config.js` publishes defaults and model metadata on `window.__ccxConfig`.
+3. `content/namespace.js` creates `window.__ccxContent` so later files can register focused core and UI helpers.
+4. `estimators/registry.js`, `estimators/*.js`, `tokenizers/ccx-tokenizer.js`, and `vendor/gpt-tokenizer/*` attach shared estimation services on `window`, including `window.__ccxEstimatorRegistry` and `window.__ccxTokenizer`.
+5. `content/core/*` and `content/ui/*` attach page parsing, estimation, observer, rendering, and drag helpers into `window.__ccxContent`.
+6. `content.js` acts as the composition root: it loads stored settings, creates the overlay, reads page state, calculates estimates, wires observers, and re-renders when the DOM or URL changes.
+7. `background.js` only handles the learn-page request and opens `learn.html`.
+
+Main source JS relationships:
+
+- `content.js` depends on `window.__ccxConfig`, `window.__ccxContent`, `window.__ccxEstimatorRegistry`, `window.__ccxTokenizer`, and the focused `content/core/*` and `content/ui/*` modules.
+- `content/core/page-context.js` reads the ChatGPT DOM and returns message/support-state data.
+- `content/core/estimate-engine.js` turns page context plus settings into token totals, context sizes, and dropdown options.
+- `content/core/runtime-observers.js` provides the debounce, DOM observation, and SPA navigation hooks that trigger refreshes.
+- `content/ui/overlay-view.js` owns overlay DOM creation, rendering, and UI event wiring.
+- `content/ui/overlay-drag.js` owns draggable positioning and persistence callbacks for the overlay shell.
+- `estimators/fast.js` and `estimators/precise.js` register the shipped estimators, while `estimators/method-b.js` is a placeholder/example registry entry.
+
+```mermaid
+flowchart TD
+  manifest["manifest.json"]
+  config["config.js\nwindow.__ccxConfig"]
+  namespace["content/namespace.js\nwindow.__ccxContent"]
+  registry["estimators/registry.js\nwindow.__ccxEstimatorRegistry"]
+  estimators["estimators/fast.js\nestimators/precise.js\nestimators/method-b.js"]
+  tokenizer["tokenizers/ccx-tokenizer.js\nwindow.__ccxTokenizer"]
+  vendor["vendor/gpt-tokenizer/*"]
+  core["content/core/*"]
+  ui["content/ui/*"]
+  content["content.js\ncomposition root"]
+  background["background.js"]
+
+  manifest --> config
+  manifest --> namespace
+  manifest --> registry
+  manifest --> estimators
+  manifest --> tokenizer
+  manifest --> vendor
+  manifest --> core
+  manifest --> ui
+  manifest --> content
+  manifest --> background
+
+  namespace --> core
+  namespace --> ui
+  estimators --> registry
+  vendor --> tokenizer
+  registry --> content
+  tokenizer --> content
+  config --> content
+  core --> content
+  ui --> content
+  content -. "chrome.runtime.sendMessage\nccx-open-learn" .-> background
+```
