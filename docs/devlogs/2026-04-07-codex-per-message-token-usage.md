@@ -10,6 +10,8 @@ Added an optional per-message usage display that shows token estimates and conte
 - Rendered per-message badges in `content.js` and made badge updates idempotent to avoid observer-triggered render loops.
 - Added badge styling and checkbox width fix in `styles.css`.
 - Updated `README.md` to mention the new optional per-message usage display.
+- Added lightweight per-call memoization for per-message token estimation in `content/core/estimate-engine.js` to reduce duplicate estimator work when messages repeat.
+- Renamed a loop index in `content.js` for clarity (`messageIndex`).
 
 # Tests
 
@@ -26,6 +28,7 @@ Added an optional per-message usage display that shows token estimates and conte
 - `node --check content/core/estimate-engine.js`
 - `node --check content/ui/overlay-view.js`
 - `node scripts/validate.mjs`
+- `node --check content/core/estimate-engine.js`
 - Manual browser verification with Playwright using a local fixture page and loaded extension scripts.
 
 # Next

@@ -167,18 +167,27 @@
       config
     });
     const perMessageUsage = settings.showPerMessageUsage
-      ? (pageContext.messages || []).map((message) => {
-          const tokens = estimateTokensWithFallback({
-            text: message.text,
-            estimator,
-            estimatorRegistry,
-            modelId: settings.modelOverride,
-            tokenizer,
-            settings
-          });
+      ? (() => {
+          const tokenCache = new Map();
+          return (pageContext.messages || []).map((message) => {
+            const messageText = message.text || "";
+            let tokens = tokenCache.get(messageText);
+            if (!Number.isFinite(tokens)) {
+              tokens = estimateTokensWithFallback({
+                text: messageText,
+                estimator,
+                estimatorRegistry,
+                modelId: settings.modelOverride,
+                tokenizer,
+                settings
+              });
+              tokenCache.set(messageText, tokens);
+            }
+
           const contextPercent = contextSize > 0 ? (tokens / contextSize) * 100 : 0;
           return { tokens, contextPercent };
-        })
+          });
+        })()
       : [];
 
     return {

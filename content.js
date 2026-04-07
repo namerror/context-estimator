@@ -312,9 +312,9 @@
     const count = Math.min(messageNodes.length, usage.length);
     const activeNodes = new Set();
 
-    for (let index = 0; index < count; index += 1) {
-      const node = messageNodes[index];
-      const messageUsage = usage[index];
+    for (let messageIndex = 0; messageIndex < count; messageIndex += 1) {
+      const node = messageNodes[messageIndex];
+      const messageUsage = usage[messageIndex];
       if (!node || !messageUsage || !Number.isFinite(messageUsage.tokens)) continue;
 
       const nextText = `${formatNumber(messageUsage.tokens)} · ${formatPercent(messageUsage.contextPercent || 0)}`;
