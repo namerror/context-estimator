@@ -27,7 +27,6 @@ jobs:
           node --check config.js
           node --check content.js
           node --check estimators/fast.js
-          node --check estimators/method-b.js
           node --check estimators/precise.js
           node --check estimators/registry.js
           node --check tokenizers/ccx-tokenizer.js
